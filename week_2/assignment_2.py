@@ -69,7 +69,7 @@ class CBC:
 
     def decrypt(self, ciphertext: bytes) -> bytes:
         if len(ciphertext) % BLOCK_SIZE != 0:
-            raise ValueError("Ciphertext is not a multiple of 16 bytes")
+            raise ValueError(f"Ciphertext is not a multiple of {BLOCK_SIZE} bytes")
         blocks = [ciphertext[i : i + BLOCK_SIZE] for i in range(0, len(ciphertext), BLOCK_SIZE)]
 
         plaintext = b""
@@ -87,14 +87,48 @@ class CBC:
         return pkcs_unpad(plaintext)[BLOCK_SIZE:]
 
 
+class CTR:
+    def __init__(self, aes: AES):
+        self.aes = aes
+
+    def _encrypt_decrypt(self, data: bytes, iv: bytes) -> bytes:
+        # Decrypting in CTR mode is the same as encrypting
+        if iv and len(iv) != BLOCK_SIZE:
+            raise ValueError(f"IV must be {BLOCK_SIZE} bytes")
+
+        # Note that CTR mode does not require padding
+        blocks = [data[i : i + BLOCK_SIZE] for i in range(0, len(data), BLOCK_SIZE)]
+        ciphertext = b""
+
+        for i, block in enumerate(blocks):
+            counter = (int.from_bytes(iv, "big") + i).to_bytes(BLOCK_SIZE, "big")
+            keystream = self.aes.encrypt(counter)
+            ciphertext += bytes([a ^ b for a, b in zip(block, keystream[: len(block)])])
+
+        return ciphertext
+
+    def encrypt(self, plaintext: bytes, iv: bytes) -> bytes:
+        return iv + self._encrypt_decrypt(plaintext, iv)
+
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        if len(ciphertext) < BLOCK_SIZE:
+            raise ValueError("Ciphertext too short, should include IV")
+
+        iv = ciphertext[:BLOCK_SIZE]
+        ciphertext_body = ciphertext[BLOCK_SIZE:]
+
+        return self._encrypt_decrypt(ciphertext_body, iv)
+
+
 @click.command()
 @click.option("--test", is_flag=True, help="Run encryption/decryption tests")
 def main(test):
     if test:
-        cbc_key = os.urandom(BLOCK_SIZE)
+        key = os.urandom(BLOCK_SIZE)
         iv = os.urandom(BLOCK_SIZE)
 
-        cbc = CBC(AES(cbc_key))
+        cbc = CBC(AES(key))
+        ctr = CTR(AES(key))
 
         plaintext = b"Hello CBC mode! Testing AES encryption in blocks."
         ciphertext = cbc.encrypt(plaintext, iv)
@@ -103,6 +137,15 @@ def main(test):
         print("Original:", plaintext)
         print("Encrypted:", ciphertext.hex())
         print("Decrypted:", decrypted)
+
+        plaintext = b"Hello CTR mode! Testing AES encryption in blocks."
+        ciphertext = ctr.encrypt(plaintext, iv)
+        decrypted = ctr.decrypt(ciphertext)
+
+        print("Original:", plaintext)
+        print("Encrypted:", ciphertext.hex())
+        print("Decrypted:", decrypted)
+
         return
 
     # CBC mode encryption/decryption
@@ -117,6 +160,21 @@ def main(test):
     cbc = CBC(AES(cbc_key))
     decrypted_1 = cbc.decrypt(cbc_cipher_1)
     decrypted_2 = cbc.decrypt(cbc_cipher_2)
+    print("Decrypted 1:", decrypted_1)
+    print("Decrypted 2:", decrypted_2)
+
+    # CTE mode encryption/decryption
+    ctr_key = bytes.fromhex("36f18357be4dbd77f050515c73fcf9f2")
+    ctr_cipher_1 = bytes.fromhex(
+        "69dda8455c7dd4254bf353b773304eec0ec7702330098ce7f7520d1cbbb20fc388d1b0adb5054dbd7370849dbf0b88d393f252e764f1f5f7ad97ef79d59ce29f5f51eeca32eabedd9afa9329"
+    )
+    ctr_cipher_2 = bytes.fromhex(
+        "770b80259ec33beb2561358a9f2dc617e46218c0a53cbeca695ae45faa8952aa0e311bde9d4e01726d3184c34451"
+    )
+
+    ctr = CTR(AES(ctr_key))
+    decrypted_1 = ctr.decrypt(ctr_cipher_1)
+    decrypted_2 = ctr.decrypt(ctr_cipher_2)
     print("Decrypted 1:", decrypted_1)
     print("Decrypted 2:", decrypted_2)
 
